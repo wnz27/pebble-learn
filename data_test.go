@@ -527,6 +527,16 @@ func runBatchDefineCmd(d *datadriven.TestData, b *Batch) error {
 				return errors.Errorf("%s expects 1 argument", parts[0])
 			}
 			err = b.Delete([]byte(parts[1]), nil)
+		case "del-sized":
+			if len(parts) != 3 {
+				return errors.Errorf("%s expects 1 argument", parts[0])
+			}
+			var valSize uint64
+			valSize, err = strconv.ParseUint(parts[2], 10, 32)
+			if err != nil {
+				return err
+			}
+			err = b.DeleteSized([]byte(parts[1]), uint32(valSize), nil)
 		case "singledel":
 			if len(parts) != 2 {
 				return errors.Errorf("%s expects 1 argument", parts[0])
@@ -808,6 +818,12 @@ func runDBDefineCmd(td *datadriven.TestData, opts *Options) (*DB, error) {
 			for _, levelOpts := range opts.Levels {
 				levelOpts.BlockSize = size
 			}
+		case "format-major-version":
+			fmv, err := strconv.Atoi(arg.Vals[0])
+			if err != nil {
+				return nil, err
+			}
+			opts.FormatMajorVersion = FormatMajorVersion(fmv)
 		}
 	}
 	d, err := Open("", opts)
