@@ -90,6 +90,10 @@ type LevelMetrics struct {
 		// LevelMetrics.format, but are available to sophisticated clients.
 		BytesWrittenDataBlocks  uint64
 		BytesWrittenValueBlocks uint64
+		// The total "compensation" added to the level size during compacting
+		// picking. Compensation inflates the size of a level according to an
+		// estimate of the amount of data the level will delete.
+		Compensation uint64
 	}
 }
 

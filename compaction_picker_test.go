@@ -1256,43 +1256,25 @@ func TestCompactionPickerCompensatedSize(t *testing.T) {
 		size                  uint64
 		pointDelEstimateBytes uint64
 		rangeDelEstimateBytes uint64
-		pointTombstoneWeight  float64
 		wantBytes             uint64
 	}{
 		{
 			size:                  100,
 			pointDelEstimateBytes: 0,
 			rangeDelEstimateBytes: 0,
-			pointTombstoneWeight:  1,
 			wantBytes:             100,
 		},
 		{
 			size:                  100,
 			pointDelEstimateBytes: 10,
 			rangeDelEstimateBytes: 0,
-			pointTombstoneWeight:  1,
 			wantBytes:             100 + 10,
 		},
 		{
 			size:                  100,
 			pointDelEstimateBytes: 10,
 			rangeDelEstimateBytes: 5,
-			pointTombstoneWeight:  1,
 			wantBytes:             100 + 10 + 5,
-		},
-		{
-			size:                  100,
-			pointDelEstimateBytes: 10,
-			rangeDelEstimateBytes: 5,
-			pointTombstoneWeight:  2,
-			wantBytes:             100 + 20 + 5,
-		},
-		{
-			size:                  100,
-			pointDelEstimateBytes: 10,
-			rangeDelEstimateBytes: 5,
-			pointTombstoneWeight:  0.5,
-			wantBytes:             100 + 5 + 5,
 		},
 	}
 
@@ -1302,7 +1284,7 @@ func TestCompactionPickerCompensatedSize(t *testing.T) {
 			f.InitPhysicalBacking()
 			f.Stats.PointDeletionsBytesEstimate = tc.pointDelEstimateBytes
 			f.Stats.RangeDeletionsBytesEstimate = tc.rangeDelEstimateBytes
-			gotBytes := compensatedSize(f, tc.pointTombstoneWeight)
+			gotBytes := compensatedSize(f)
 			require.Equal(t, tc.wantBytes, gotBytes)
 		})
 	}
