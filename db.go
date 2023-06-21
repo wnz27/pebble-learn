@@ -816,6 +816,7 @@ func (d *DB) ApplyNoSyncWait(batch *Batch, opts *WriteOptions) error {
 
 // REQUIRES: noSyncWait => opts.Sync
 func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) error {
+	begin := time.Now()
 	if err := d.closed.Load(); err != nil {
 		panic(err)
 	}
@@ -856,6 +857,9 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 	if int(batch.memTableSize) >= d.largeBatchThreshold {
 		batch.flushable = newFlushableBatch(batch, d.opts.Comparer)
 	}
+	if elapsed := time.Since(begin); elapsed > time.Millisecond {
+		d.opts.Logger.Infof("before d.commit.Commit batch spent %s", elapsed)
+	}
 	if err := d.commit.Commit(batch, sync, noSyncWait); err != nil {
 		// There isn't much we can do on an error here. The commit pipeline will be
 		// horked at this point.
@@ -871,6 +875,30 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 	if batch.flushable != nil {
 		batch.data = nil
 	}
+
+	stats := batch.CommitStats()
+	if stats.TotalDuration > 50*time.Millisecond {
+		d.opts.Logger.Infof("slow batch commit: %s", stats.String())
+	}
+	if stats.CommitMutexDuration > 30*time.Millisecond {
+		d.opts.Logger.Infof("slow commit mutex acquisition: %s", stats.String())
+	}
+	if stats.PendingEnqueueDuration > 5*time.Millisecond {
+		d.opts.Logger.Infof("slow pending enqueue: %s", stats.String())
+	}
+	if stats.MakeRoomForWriteDuration > 10*time.Millisecond {
+		d.opts.Logger.Infof("slow make room for write: %s", stats.String())
+	}
+	if stats.SeqNumIncDuration > 5*time.Millisecond {
+		d.opts.Logger.Infof("slow seq num inc: %s", stats.String())
+	}
+	if stats.MemtableRotationDuration > 20*time.Millisecond {
+		d.opts.Logger.Infof("slow memtable rotation: %s", stats.String())
+	}
+	if stats.DBMutexDuration > 10*time.Millisecond {
+		d.opts.Logger.Infof("slow DB mutex acquisition: %s", stats.String())
+	}
+
 	return nil
 }
 
@@ -934,7 +962,9 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		}
 	}
 
+	beforeLock := time.Now()
 	d.mu.Lock()
+	b.commitStats.DBMutexDuration = time.Since(beforeLock)
 
 	var err error
 	if !b.ingestedSSTBatch {
@@ -942,7 +972,9 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		// never be applied to the memtable, so we don't need to make room for
 		// write. For the other cases, switch out the memtable if there was not
 		// enough room to store the batch.
+		beforeMakeRoom := time.Now()
 		err = d.makeRoomForWrite(b)
+		b.commitStats.MakeRoomForWriteDuration = time.Since(beforeMakeRoom)
 	}
 
 	if err == nil && !d.opts.DisableWAL {
@@ -965,7 +997,9 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 	}
 
 	if b.flushable == nil {
+		beforeWrite := time.Now()
 		size, b.commitStats.WALQueueWaitDuration, err = d.mu.log.SyncRecord(repr, syncWG, syncErr)
+		b.commitStats.WALWriteDuration = time.Since(beforeWrite)
 		if err != nil {
 			panic(err)
 		}
@@ -2133,7 +2167,9 @@ func (d *DB) makeRoomForWrite(b *Batch) error {
 	stalled := false
 	for {
 		if b != nil && b.flushable == nil {
+			now := time.Now()
 			err := d.mu.mem.mutable.prepare(b)
+			b.commitStats.MemtablePrepareDuration += time.Since(now)
 			if err != arenaskl.ErrArenaFull {
 				if stalled {
 					d.opts.EventListener.WriteStallEnd()
@@ -2146,6 +2182,7 @@ func (d *DB) makeRoomForWrite(b *Batch) error {
 			}
 			return nil
 		}
+
 		// force || err == ErrArenaFull, so we need to rotate the current memtable.
 		{
 			var size uint64
@@ -2237,7 +2274,11 @@ func (d *DB) makeRoomForWrite(b *Batch) error {
 		} else {
 			logSeqNum = d.mu.versions.logSeqNum.Load()
 		}
+		now := time.Now()
 		d.rotateMemtable(newLogNum, logSeqNum, immMem)
+		if b != nil {
+			b.commitStats.MemtableRotationDuration += time.Since(now)
+		}
 		force = false
 	}
 }

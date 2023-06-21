@@ -316,6 +316,7 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 	}
 
 	// Apply the batch to the memtable.
+	preapply := time.Now()
 	if err := p.env.apply(b, mem); err != nil {
 		b.db = nil // prevent batch reuse on error
 		// NB: we are not doing <-p.commitQueueSem since the batch is still
@@ -323,6 +324,7 @@ func (p *commitPipeline) Commit(b *Batch, syncWAL bool, noSyncWait bool) error {
 		// removing the batch from the pending queue.
 		return err
 	}
+	b.commitStats.MemtableApplicationDuration = time.Since(preapply)
 
 	// Publish the batch sequence number.
 	p.publish(b)
@@ -444,27 +446,35 @@ func (p *commitPipeline) prepare(b *Batch, syncWAL bool, noSyncWait bool) (*memT
 		b.commit.Add(2)
 	}
 
+	beforeAcquire := time.Now()
 	p.mu.Lock()
+	afterAcquire := time.Now()
 
 	// Enqueue the batch in the pending queue. Note that while the pending queue
 	// is lock-free, we want the order of batches to be the same as the sequence
 	// number order.
 	p.pending.enqueue(b)
+	afterEnqueue := time.Now()
 
 	// Assign the batch a sequence number. Note that we use atomic operations
 	// here to handle concurrent reads of logSeqNum. commitPipeline.mu provides
 	// mutual exclusion for other goroutines writing to logSeqNum.
 	b.setSeqNum(p.env.logSeqNum.Add(n) - n)
+	afterSeqNum := time.Now()
 
 	// Write the data to the WAL.
 	mem, err := p.env.write(b, syncWG, syncErr)
 
 	p.mu.Unlock()
+	b.commitStats.CommitMutexDuration = afterAcquire.Sub(beforeAcquire)
+	b.commitStats.PendingEnqueueDuration = afterEnqueue.Sub(afterAcquire)
+	b.commitStats.SeqNumIncDuration = afterSeqNum.Sub(afterEnqueue)
 
 	return mem, err
 }
 
 func (p *commitPipeline) publish(b *Batch) {
+	begin := time.Now()
 	// Mark the batch as applied.
 	b.applied.Store(true)
 
@@ -508,4 +518,5 @@ func (p *commitPipeline) publish(b *Batch) {
 
 		t.commit.Done()
 	}
+	b.commitStats.PublishDuration = time.Since(begin)
 }

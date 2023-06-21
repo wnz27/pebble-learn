@@ -335,6 +335,47 @@ type BatchCommitStats struct {
 	// duration for the WAL sync (if requested). The former should be tiny and
 	// one can assume that this is all due to the WAL sync.
 	CommitWaitDuration time.Duration
+	// MemtableApplicationDuration
+	MemtableApplicationDuration time.Duration
+	// PublishDuration
+	PublishDuration time.Duration
+	// CommitMutexDuration
+	CommitMutexDuration time.Duration
+	// WALWriteDuration
+	WALWriteDuration time.Duration
+	// DBMutexDuration
+	DBMutexDuration time.Duration
+	// PendingEnqueueDuration
+	PendingEnqueueDuration time.Duration
+	// MakeRoomForWriteDuration
+	MakeRoomForWriteDuration time.Duration
+	// MemtableRotationDuration
+	MemtableRotationDuration time.Duration
+	// MemtablePrepareDuration
+	MemtablePrepareDuration time.Duration
+	// SeqNumIncDuration
+	SeqNumIncDuration time.Duration
+}
+
+func (s *BatchCommitStats) String() string {
+	return fmt.Sprintf("(TotDur: %s, SemaWait: %s, WALQueueWait: %s, MemtblStall: %s, L0Stall: %s, WALRot: %s, CommitWait: %s, MemtblApply: %s, Publish: %s, CommitMu: %s, WALWrite: %s, DBMu: %s, PendingEnqueue: %s, RoomForWrite: %s, MemtblRot: %s, MemtblPrep: %s, SeqNumInc: %s)",
+		s.TotalDuration,
+		s.SemaphoreWaitDuration,
+		s.WALQueueWaitDuration,
+		s.MemTableWriteStallDuration,
+		s.L0ReadAmpWriteStallDuration,
+		s.WALRotationDuration,
+		s.CommitWaitDuration,
+		s.MemtableApplicationDuration,
+		s.PublishDuration,
+		s.CommitMutexDuration,
+		s.WALWriteDuration,
+		s.DBMutexDuration,
+		s.PendingEnqueueDuration,
+		s.MakeRoomForWriteDuration,
+		s.MemtableRotationDuration,
+		s.MemtablePrepareDuration,
+		s.SeqNumIncDuration)
 }
 
 var _ Reader = (*Batch)(nil)
