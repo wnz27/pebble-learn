@@ -2114,7 +2114,7 @@ func (d *DB) newMemTable(logNum FileNum, logSeqNum uint64) (*memTable, *flushabl
 
 	d.memTableCount.Add(1)
 	d.memTableReserved.Add(int64(size))
-	releaseAccountingReservation := d.opts.Cache.Reserve(size)
+	//releaseAccountingReservation := d.opts.Cache.Reserve(size)
 
 	mem := newMemTable(memTableOptions{
 		Options:   d.opts,
@@ -2131,7 +2131,7 @@ func (d *DB) newMemTable(logNum FileNum, logSeqNum uint64) (*memTable, *flushabl
 		mem.arenaBuf = nil
 		d.memTableCount.Add(-1)
 		d.memTableReserved.Add(-int64(size))
-		releaseAccountingReservation()
+		//releaseAccountingReservation()
 	}
 	return mem, entry
 }

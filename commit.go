@@ -485,27 +485,29 @@ func (p *commitPipeline) publish(b *Batch) {
 	// batch or there is an unapplied batch blocking us. When that unapplied
 	// batch applies it will go through the same process and publish our batch
 	// for us.
+	var batchPtrBuf [record.SyncConcurrency]*Batch
+	batches := batchPtrBuf[:0]
+
 	for {
 		t := p.pending.dequeue()
 		if t == nil {
-			// Wait for another goroutine to publish us. We might also be waiting for
-			// the WAL sync to finish.
-			now := time.Now()
-			b.commit.Wait()
-			b.commitStats.CommitWaitDuration += time.Since(now)
 			break
 		}
 		if !t.applied.Load() {
 			panic("not reached")
 		}
+		batches = append(batches, t)
+	}
 
+	if len(batches) > 0 {
 		// We're responsible for publishing the sequence number for batch t, but
 		// another concurrent goroutine might sneak in and publish the sequence
 		// number for a subsequent batch. That's ok as all we're guaranteeing is
 		// that the sequence number ratchets up.
+		t := batches[len(batches)-1]
+		newSeqNum := t.SeqNum() + uint64(t.Count())
 		for {
 			curSeqNum := p.env.visibleSeqNum.Load()
-			newSeqNum := t.SeqNum() + uint64(t.Count())
 			if newSeqNum <= curSeqNum {
 				// t's sequence number has already been published.
 				break
@@ -515,8 +517,16 @@ func (p *commitPipeline) publish(b *Batch) {
 				break
 			}
 		}
-
-		t.commit.Done()
 	}
+
+	for i := 0; i < len(batches); i++ {
+		batches[i].commit.Done()
+	}
+
+	// Wait for another goroutine to publish us. We might also be waiting for
+	// the WAL sync to finish.
+	now := time.Now()
+	b.commit.Wait()
+	b.commitStats.CommitWaitDuration += time.Since(now)
 	b.commitStats.PublishDuration = time.Since(begin)
 }
