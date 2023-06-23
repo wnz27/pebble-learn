@@ -394,9 +394,9 @@ func TestMemTableReserved(t *testing.T) {
 	b := newBatch(nil)
 	b.Set([]byte("blueberry"), []byte("pie"), nil)
 	require.NotEqual(t, 0, int(b.memTableSize))
-	prevReserved := m.reserved
+	prevReserved := m.reserved.Load()
 	m.prepare(b)
-	require.Equal(t, int(m.reserved), int(b.memTableSize)+int(prevReserved))
+	require.Equal(t, int(m.reserved.Load()), int(b.memTableSize)+int(prevReserved))
 }
 
 func buildMemTable(b *testing.B) (*memTable, [][]byte) {

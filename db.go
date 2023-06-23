@@ -378,7 +378,7 @@ type DB struct {
 			// The number of input bytes to the log. This is the raw size of the
 			// batches written to the WAL, without the overhead of the record
 			// envelopes.
-			bytesIn uint64
+			bytesIn atomic.Uint64
 			// The LogWriter is protected by commitPipeline.mu. This allows log
 			// writes to be performed without holding DB.mu, but requires both
 			// commitPipeline.mu and DB.mu to be held when rotating the WAL/memtable
@@ -393,6 +393,7 @@ type DB struct {
 		}
 
 		mem struct {
+			maybeMutable atomic.Pointer[memTable]
 			// The current mutable memTable.
 			mutable *memTable
 			// Queue of flushables (the mutable memtable is at end). Elements are
@@ -962,32 +963,39 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 		}
 	}
 
-	beforeLock := time.Now()
-	d.mu.Lock()
-	b.commitStats.DBMutexDuration = time.Since(beforeLock)
-
 	var err error
-	if !b.ingestedSSTBatch {
-		// Batches which contain keys of kind InternalKeyKindIngestSST will
-		// never be applied to the memtable, so we don't need to make room for
-		// write. For the other cases, switch out the memtable if there was not
-		// enough room to store the batch.
-		beforeMakeRoom := time.Now()
-		err = d.makeRoomForWrite(b)
-		b.commitStats.MakeRoomForWriteDuration = time.Since(beforeMakeRoom)
+	var mem *memTable
+	// Batches which exclusively contain keys of kind InternalKeyKindIngestSST
+	// will never be applied to the memtable, so we don't need to make room for
+	// write. For the other cases, switch out the memtable if there is not
+	// enough room to store the batch.
+	if b.ingestedSSTBatch {
+		d.mu.Lock()
+		mem = d.mu.mem.mutable
+		d.mu.Unlock()
+	} else {
+		// Note that for non-flushable batches (b.flushable == nil):
+		// (*memTable.prepare)/makeRoomForWrite() adds a reference to the
+		// memtable which will prevent it from being flushed until we
+		// unreference it. This reference is dropped in DB.commitApply().
+		mem = d.mu.mem.maybeMutable.Load()
+		if mem != nil {
+			err = mem.prepare(b)
+		}
+
+		if mem == nil || err == arenaskl.ErrArenaFull {
+			// Slow path; The memtable needs to be rotated or is in the process
+			// of being rotated.
+			beforeLock := time.Now()
+			d.mu.Lock()
+			b.commitStats.DBMutexDuration = time.Since(beforeLock)
+			beforeMakeRoom := time.Now()
+			err = d.makeRoomForWrite(b)
+			mem = d.mu.mem.mutable
+			b.commitStats.MakeRoomForWriteDuration = time.Since(beforeMakeRoom)
+			d.mu.Unlock()
+		}
 	}
-
-	if err == nil && !d.opts.DisableWAL {
-		d.mu.log.bytesIn += uint64(len(repr))
-	}
-
-	// Grab a reference to the memtable while holding DB.mu. Note that for
-	// non-flushable batches (b.flushable == nil) makeRoomForWrite() added a
-	// reference to the memtable which will prevent it from being flushed until
-	// we unreference it. This reference is dropped in DB.commitApply().
-	mem := d.mu.mem.mutable
-
-	d.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -995,6 +1003,7 @@ func (d *DB) commitWrite(b *Batch, syncWG *sync.WaitGroup, syncErr *error) (*mem
 	if d.opts.DisableWAL {
 		return mem, nil
 	}
+	d.mu.log.bytesIn.Add(uint64(len(repr)))
 
 	if b.flushable == nil {
 		beforeWrite := time.Now()
@@ -1868,7 +1877,7 @@ func (d *DB) Metrics() *Metrics {
 		metrics.WAL.PhysicalSize += d.mu.log.queue[i].fileSize
 	}
 
-	metrics.WAL.BytesIn = d.mu.log.bytesIn // protected by d.mu
+	metrics.WAL.BytesIn = d.mu.log.bytesIn.Load()
 	for i, n := 0, len(d.mu.mem.queue)-1; i < n; i++ {
 		metrics.WAL.Size += d.mu.mem.queue[i].logSize
 	}
@@ -2182,6 +2191,8 @@ func (d *DB) makeRoomForWrite(b *Batch) error {
 			}
 			return nil
 		}
+		// Prevent incoming committers from trying to use the mutable memtable.
+		d.mu.mem.maybeMutable.Store(nil)
 
 		// force || err == ErrArenaFull, so we need to rotate the current memtable.
 		{
@@ -2302,6 +2313,7 @@ func (d *DB) rotateMemtable(newLogNum FileNum, logSeqNum uint64, prev *memTable)
 	// NB: prev should be the current mutable memtable.
 	var entry *flushableEntry
 	d.mu.mem.mutable, entry = d.newMemTable(newLogNum, logSeqNum)
+	d.mu.mem.maybeMutable.Store(d.mu.mem.mutable)
 	d.mu.mem.queue = append(d.mu.mem.queue, entry)
 	d.updateReadStateLocked(nil)
 	if prev.writerUnref() {

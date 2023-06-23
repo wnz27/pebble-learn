@@ -73,7 +73,7 @@ type memTable struct {
 	// data stored in the memtable as well as inflight batch commit
 	// operations. This value is incremented pessimistically by prepare() in
 	// order to account for the space needed by a batch.
-	reserved uint32
+	reserved atomic.Uint32
 	// writerRefs tracks the write references on the memtable. The two sources of
 	// writer references are the memtable being on DB.mu.mem.queue and from
 	// inflight mutations that have reserved space in the memtable but not yet
@@ -142,7 +142,7 @@ func newMemTable(opts memTableOptions) *memTable {
 	m.skl.Reset(arena, m.cmp)
 	m.rangeDelSkl.Reset(arena, m.cmp)
 	m.rangeKeySkl.Reset(arena, m.cmp)
-	m.reserved = arena.Size()
+	m.reserved.Store(arena.Size())
 	return m
 }
 
@@ -169,16 +169,21 @@ func (m *memTable) readyForFlush() bool {
 }
 
 // Prepare reserves space for the batch in the memtable and references the
-// memtable preventing it from being flushed until the batch is applied. Note
-// that prepare is not thread-safe, while apply is. The caller must call
-// writerUnref() after the batch has been applied.
+// memtable preventing it from being flushed until the batch is applied. The
+// caller must call writerUnref() after the batch has been applied.
 func (m *memTable) prepare(batch *Batch) error {
-	avail := m.availBytes()
-	if batch.memTableSize > uint64(avail) {
-		return arenaskl.ErrArenaFull
+	capacity := uint64(m.skl.Arena().Capacity())
+	for {
+		oldReserved := m.reserved.Load()
+		newReserved := uint64(oldReserved) + batch.memTableSize
+		if newReserved > capacity {
+			return arenaskl.ErrArenaFull
+		}
+		if m.reserved.CompareAndSwap(oldReserved, uint32(newReserved)) {
+			break
+		}
+		// Try again.
 	}
-	m.reserved += uint32(batch.memTableSize)
-
 	m.writerRef()
 	return nil
 }
@@ -264,14 +269,15 @@ func (m *memTable) containsRangeKeys() bool {
 }
 
 func (m *memTable) availBytes() uint32 {
-	a := m.skl.Arena()
-	if m.writerRefs.Load() == 1 {
-		// If there are no other concurrent apply operations, we can update the
-		// reserved bytes setting to accurately reflect how many bytes of been
-		// allocated vs the over-estimation present in memTableEntrySize.
-		m.reserved = a.Size()
-	}
-	return a.Capacity() - m.reserved
+	//a := m.skl.Arena()
+	//if m.writerRefs.Load() == 1 {
+	// If there are no other concurrent apply operations, we can update the
+	// reserved bytes setting to accurately reflect how many bytes of been
+	// allocated vs the over-estimation present in memTableEntrySize.
+	//m.reserved = a.Size()
+	//}
+	// TODO(jackson): fix
+	return m.reserved.Load()
 }
 
 func (m *memTable) inuseBytes() uint64 {
