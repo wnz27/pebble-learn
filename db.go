@@ -878,7 +878,7 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 	}
 
 	stats := batch.CommitStats()
-	if stats.TotalDuration > 50*time.Millisecond {
+	if stats.TotalDuration > 8*time.Millisecond {
 		d.opts.Logger.Infof("slow batch commit: %s", stats.String())
 	}
 	if stats.CommitMutexDuration > 30*time.Millisecond {
@@ -893,10 +893,10 @@ func (d *DB) applyInternal(batch *Batch, opts *WriteOptions, noSyncWait bool) er
 	if stats.SeqNumIncDuration > 5*time.Millisecond {
 		d.opts.Logger.Infof("slow seq num inc: %s", stats.String())
 	}
-	if stats.MemtableRotationDuration > 20*time.Millisecond {
+	if stats.MemtableRotationDuration > 10*time.Millisecond {
 		d.opts.Logger.Infof("slow memtable rotation: %s", stats.String())
 	}
-	if stats.DBMutexDuration > 10*time.Millisecond {
+	if stats.DBMutexDuration > 5*time.Millisecond {
 		d.opts.Logger.Infof("slow DB mutex acquisition: %s", stats.String())
 	}
 
