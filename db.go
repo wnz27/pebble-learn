@@ -244,6 +244,7 @@ type DB struct {
 		// but are still referenced by an inuse readState.
 		memTableCount    int64
 		memTableReserved int64 // number of bytes reserved in the cache for memtables
+		memTableRecycle  atomic.Pointer[[]byte]
 
 		// The size of the current log file (i.e. db.mu.log.queue[len(queue)-1].
 		logSize uint64
@@ -1968,9 +1969,21 @@ func (d *DB) newMemTable(logNum FileNum, logSeqNum uint64) (*memTable, *flushabl
 	atomic.AddInt64(&d.atomic.memTableReserved, int64(size))
 	//releaseAccountingReservation := d.opts.Cache.Reserve(size)
 
+	var arenaBuf []byte
+	if recycledBuf := d.atomic.memTableRecycle.Swap(nil); recycledBuf != nil {
+		arenaBuf = *recycledBuf
+		if len(arenaBuf) != size {
+			arenaBuf = nil
+			manual.Free(arenaBuf)
+		}
+	}
+	if arenaBuf == nil {
+		arenaBuf = manual.New(int(size))
+	}
+
 	mem := newMemTable(memTableOptions{
 		Options:   d.opts,
-		arenaBuf:  manual.New(int(size)),
+		arenaBuf:  arenaBuf,
 		logSeqNum: logSeqNum,
 	})
 
@@ -1979,7 +1992,18 @@ func (d *DB) newMemTable(logNum FileNum, logSeqNum uint64) (*memTable, *flushabl
 
 	entry := d.newFlushableEntry(mem, logNum, logSeqNum)
 	entry.releaseMemAccounting = func() {
-		manual.Free(mem.arenaBuf)
+		// We might be able to recycle mem.arenaBuf, but we don't hold
+		// d.mu.mem.nextSize. We optimistically assume we can.
+		recycleBuf := new([]byte)
+		*recycleBuf = mem.arenaBuf
+
+		oldBuf := d.atomic.memTableRecycle.Swap(recycleBuf)
+		// If there already was a memtable waiting to be recycled, we're now
+		// responsible for freeing it.
+		if oldBuf != nil {
+			manual.Free(*oldBuf)
+		}
+
 		mem.arenaBuf = nil
 		atomic.AddInt64(&d.atomic.memTableCount, -1)
 		atomic.AddInt64(&d.atomic.memTableReserved, -int64(size))
