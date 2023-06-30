@@ -315,7 +315,7 @@ type LogWriterConfig struct {
 
 // CapAllocatedBlocks is the maximum number of blocks allocated by the
 // LogWriter.
-const CapAllocatedBlocks = 16
+const CapAllocatedBlocks = 512
 
 // NewLogWriter returns a new LogWriter.
 func NewLogWriter(w io.Writer, logNum base.FileNum, logWriterConfig LogWriterConfig) *LogWriter {
