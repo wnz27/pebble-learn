@@ -835,7 +835,7 @@ func (c *tableCacheShard) evict(fileNum FileNum, dbOpts *tableCacheOpts, allowLe
 		v.release(c)
 	}
 
-	dbOpts.opts.Cache.EvictFile(dbOpts.cacheID, fileNum)
+	//dbOpts.opts.Cache.EvictFile(dbOpts.cacheID, fileNum)
 }
 
 // removeDB evicts any nodes which have a reference to the DB
