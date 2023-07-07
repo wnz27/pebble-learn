@@ -2598,11 +2598,12 @@ type Reader struct {
 	tableFilter       *tableFilterReader
 	// Keep types that are not multiples of 8 bytes at the end and with
 	// decreasing size.
-	Properties    Properties
-	tableFormat   TableFormat
-	rawTombstones bool
-	mergerOK      bool
-	checksumType  ChecksumType
+	Properties     Properties
+	tableFormat    TableFormat
+	rawTombstones  bool
+	mergerOK       bool
+	checksumType   ChecksumType
+	metaBufferPool BufferPool
 }
 
 // Close implements DB.Close, as documented in the pebble package.
@@ -3013,7 +3014,7 @@ func (r *Reader) transformRangeDelV1(b []byte) ([]byte, error) {
 
 func (r *Reader) readMetaindex(metaindexBH BlockHandle) error {
 	b, err := r.readBlock(
-		context.Background(), metaindexBH, nil /* transform */, nil /* readHandle */, nil /* stats */, nil /* buffer pool */)
+		context.Background(), metaindexBH, nil /* transform */, nil /* readHandle */, nil /* stats */, &r.metaBufferPool)
 	if err != nil {
 		return err
 	}
@@ -3056,7 +3057,7 @@ func (r *Reader) readMetaindex(metaindexBH BlockHandle) error {
 
 	if bh, ok := meta[metaPropertiesName]; ok {
 		b, err = r.readBlock(
-			context.Background(), bh, nil /* transform */, nil /* readHandle */, nil /* stats */, nil /* buffer pool */)
+			context.Background(), bh, nil /* transform */, nil /* readHandle */, nil /* stats */, &r.metaBufferPool)
 		if err != nil {
 			return err
 		}
@@ -3418,6 +3419,7 @@ func NewReader(f objstorage.Readable, o ReaderOptions, extraOpts ...ReaderOption
 	} else {
 		r.opts.Cache.Ref()
 	}
+	r.metaBufferPool.Init(r.opts.Cache, 0)
 
 	if f == nil {
 		r.err = errors.New("pebble/table: nil file")

@@ -97,7 +97,9 @@ func (b *Buf) Release() {
 	// The caller may have resliced o.b to be a subslice of the underlying
 	// cache.Value. Expand to the original slice.
 	b.b = b.v.Buf()
-	if b.p.size == len(b.p.pool) {
+	if b.p.size == 0 {
+		b.p.cache.Free(b.v)
+	} else if b.p.size == len(b.p.pool) {
 		// The pool is full. Evict a random item.
 		i := int(fastrand.Uint32()) % len(b.p.pool)
 		b.p.cache.Free(b.p.pool[i].v)
